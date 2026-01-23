@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <!-- ═══════════════════════════════════════════════════════════════
+         META TAGS & CHARSET
+         ═══════════════════════════════════════════════════════════════ -->
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>PRMessenger - Perfect Real-time Chat</title>
+    <meta name="description" content="Real-time chat application with voice messages, file sharing, and media support">
+    <meta name="theme-color" content="#4A90E2">
+    
+    <!-- ═══════════════════════════════════════════════════════════════
+         PWA & ICONS
+         ═══════════════════════════════════════════════════════════════ -->
+    <link rel="icon" href="https://res.cloudinary.com/df8eafxtd/image/upload/v1758912201/cropped_circle_image_foloco.png">
+    <link rel="manifest" href="/manifest.json">
+    
+    <!-- Apple PWA Support -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="PRMessenger">
+    <link rel="apple-touch-icon" href="https://res.cloudinary.com/df8eafxtd/image/upload/v1758912201/cropped_circle_image_foloco.png">
+    
+    <!-- ═══════════════════════════════════════════════════════════════
+         STYLESHEETS
+         ═══════════════════════════════════════════════════════════════ -->
+    <link rel="stylesheet" href="/front.css">
+</head>
+<body>
+    
+    <!-- ═══════════════════════════════════════════════════════════════
+         GLOBAL CONNECTION STATUS BANNER
+         Shows connection state (connecting, connected, disconnected)
+         ═══════════════════════════════════════════════════════════════ -->
+    <div class="connection-status" id="connectionStatus" role="status" aria-live="polite">
+        <span id="connectionText">Connecting...</span>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         PWA INSTALLATION POPUP
+         Prompts user to install app for offline support
+         ═══════════════════════════════════════════════════════════════ -->
+    <aside class="pwa-install-popup" id="pwaInstallPopup" role="dialog" aria-labelledby="pwaTitle">
+        <!-- Close Button -->
+        <button class="pwa-close" id="closePwaPopup" aria-label="Close install prompt">✕</button>
+        
+        <!-- Popup Header -->
+        <div class="pwa-popup-header">
+            <img src="https://res.cloudinary.com/df8eafxtd/image/upload/v1758912201/cropped_circle_image_foloco.png" 
+                 alt="PRMessenger" 
+                 class="pwa-popup-icon" 
+                 width="48" 
+                 height="48">
+            <div>
+                <h2 class="pwa-popup-title" id="pwaTitle">Install PRMessenger</h2>
+            </div>
+        </div>
+        
+        <!-- Popup Content -->
+        <p class="pwa-popup-subtitle">Get the full app experience</p>
+        
+        <!-- Action Buttons -->
+        <div class="pwa-popup-buttons">
+            <button class="btn btn-primary btn-sm" id="installPwaBtn">Install App</button>
+            <button class="btn btn-outline btn-sm" id="laterPwaBtn">Later</button>
+        </div>
+    </aside>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         LANDING PAGE
+         Initial screen for creating/joining rooms
+         ═══════════════════════════════════════════════════════════════ -->
+    <main class="landing-page" id="landingPage">
+        <div class="landing-card">
+            <!-- Brand Logo -->
+            <img src="https://res.cloudinary.com/df8eafxtd/image/upload/v1758912201/cropped_circle_image_foloco.png" 
+                 alt="PRMessenger Logo" 
+                 class="logo" 
+                 width="80" 
+                 height="80">
+            
+            <!-- Brand Title and Subtitle -->
+            <h1 class="brand-title">PRMessenger</h1>
+            <p class="brand-subtitle">Perfect real-time chat with media sharing</p>
+            
+            <!-- Join/Create Form -->
+            <form id="joinForm" onsubmit="return false;">
+                <!-- Username Input -->
+                <div class="form-group">
+                    <label for="username" class="sr-only">Username</label>
+                    <input type="text" 
+                           class="input" 
+                           id="username" 
+                           placeholder="Enter your name (2-20 characters)" 
+                           maxlength="20" 
+                           autocomplete="username"
+                           required>
+                </div>
+                
+                <!-- Create Room Button -->
+                <button class="btn btn-primary btn-full" id="createRoomBtn" type="button">
+                    Create New Room
+                </button>
+                
+                <!-- Divider -->
+                <div class="divider" role="separator">
+                    <span>or join existing</span>
+                </div>
+                
+                <!-- Join Room Input Group -->
+                <div class="input-group">
+                    <label for="roomCode" class="sr-only">Room Code</label>
+                    <input type="text" 
+                           class="input" 
+                           id="roomCode" 
+                           placeholder="Room Code" 
+                           maxlength="6" 
+                           autocomplete="off"
+                           style="text-transform: uppercase;">
+                    <button class="btn btn-outline" id="joinRoomBtn" type="button">Join</button>
+                </div>
+            </form>
+            
+            <!-- Feature List -->
+            <div class="features" role="contentinfo">
+                Voice Messages • File Sharing • Real-time Chat<br>
+                PWA Support • Secure Rooms • Photo/Video Sharing
+            </div>
+        </div>
+    </main>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         CHAT CONTAINER
+         Main chat interface with sidebar
+         ═══════════════════════════════════════════════════════════════ -->
+    <div class="chat-container" id="chatContainer">
+        
+        <!-- ───────────────────────────────────────────────────────────
+             LEFT SIDEBAR - Participants List
+             ─────────────────────────────────────────────────────────── -->
+        <aside class="sidebar" id="sidebar">
+            
+            <!-- Sidebar Header with Current User Info -->
+            <div class="sidebar-header">
+                <!-- Current User Display -->
+                <div class="current-user-info">
+                    <div class="user-avatar" id="currentUserAvatar">U</div>
+                    <div class="user-details">
+                        <div class="user-name" id="currentUserName">User</div>
+                        <div class="user-status">Available for chat</div>
+                    </div>
+                </div>
+                
+                <!-- Sidebar Action Buttons -->
+                <div class="sidebar-actions">
+                    <button class="sidebar-icon-btn" id="sidebarSettingsBtn" title="Settings" aria-label="Settings">⚙</button>
+                    <button class="sidebar-icon-btn" id="sidebarMenuBtn" title="Menu" aria-label="Menu">⋮</button>
+                </div>
+            </div>
+
+            <!-- Search Participants -->
+            <div class="sidebar-search">
+                <label for="participantSearch" class="sr-only">Search participants</label>
+                <input type="text" 
+                       class="sidebar-search-input" 
+                       id="participantSearch" 
+                       placeholder="Search participants..."
+                       autocomplete="off">
+            </div>
+
+            <!-- Participants Section -->
+            <div class="sidebar-section">
+                <!-- Section Header -->
+                <div class="sidebar-section-header">
+                    <span class="sidebar-section-title">Participants</span>
+                    <span class="participant-count-badge" id="sidebarParticipantCount">0</span>
+                </div>
+                
+                <!-- Participants List Container -->
+                <div class="participants-list" id="participantsList">
+                    <!-- Participants will be dynamically added here by JavaScript -->
+                </div>
+            </div>
+        </aside>
+
+        <!-- ───────────────────────────────────────────────────────────
+             MAIN CHAT AREA
+             ─────────────────────────────────────────────────────────── -->
+        <main class="main-chat">
+            
+            <!-- ─────────────────────────────────────────────────────
+                 CHAT HEADER
+                 ───────────────────────────────────────────────────── -->
+            <header class="chat-header">
+                <!-- Left Side - Room Info -->
+                <div class="header-left">
+                    <!-- Mobile Sidebar Toggle -->
+                    <button class="sidebar-toggle-btn" 
+                            id="sidebarToggleBtn" 
+                            aria-label="Toggle sidebar"
+                            aria-expanded="false">☰</button>
+                    
+                    <!-- Room Information -->
+                    <div class="room-info">
+                        <h1 id="roomTitle" class="h3-style">PRMessenger</h1>
+                        <p id="roomDetails">Connecting...</p>
+                    </div>
+                </div>
+                
+                <!-- Right Side - Controls -->
+                <div class="header-right">
+                    <!-- Participant Count -->
+                    <span class="participants" id="participantCount" aria-live="polite">0 participants</span>
+                    
+                    <!-- Room Menu Button -->
+                    <button class="menu-btn" 
+                            id="menuBtn" 
+                            aria-label="Room menu" 
+                            aria-haspopup="true"
+                            aria-expanded="false">⋮</button>
+                    
+                    <!-- Leave Room Button -->
+                    <button class="back-btn" 
+                            id="backBtn" 
+                            aria-label="Leave room">←</button>
+                </div>
+            </header>
+
+            <!-- ─────────────────────────────────────────────────────
+                 MESSAGES CONTAINER
+                 ───────────────────────────────────────────────────── -->
+            <main class="messages-container" 
+                  id="messagesContainer" 
+                  role="log" 
+                  aria-live="polite" 
+                  aria-atomic="false">
+                
+                <!-- Welcome Screen (shown when no messages) -->
+                <div class="welcome">
+                    <img src="https://res.cloudinary.com/df8eafxtd/image/upload/v1758912201/cropped_circle_image_foloco.png" 
+                         alt="PRMessenger" 
+                         class="logo" 
+                         width="100" 
+                         height="100">
+                    <h2>Welcome to PRMessenger!</h2>
+                    <p>Start chatting with voice messages, files, photos, and text.<br>
+                       Your conversations are secure and real-time.</p>
+                </div>
+            </main>
+
+            <!-- ─────────────────────────────────────────────────────
+                 TYPING INDICATOR
+                 Shows when someone is typing
+                 ───────────────────────────────────────────────────── -->
+            <div class="typing-indicator" 
+                 id="typingIndicator" 
+                 role="status" 
+                 aria-live="polite">
+                <!-- Animated Dots -->
+                <div class="typing-dots" aria-hidden="true">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </div>
+                <span id="typingText">Someone is typing...</span>
+            </div>
+
+            <!-- ─────────────────────────────────────────────────────
+                 REPLY MODE BAR
+                 Shows when replying to a message
+                 ───────────────────────────────────────────────────── -->
+            <div class="reply-mode" id="replyMode" role="status">
+                <!-- Reply Information -->
+                <div class="reply-info">
+                    <div class="reply-to" id="replyToUser">Replying to User</div>
+                    <div class="reply-preview" id="replyToMessage">Original message</div>
+                </div>
+                
+                <!-- Cancel Reply Button -->
+                <button class="reply-cancel" 
+                        id="cancelReply" 
+                        aria-label="Cancel reply">✕</button>
+            </div>
+
+            <!-- ─────────────────────────────────────────────────────
+                 MESSAGE INPUT AREA
+                 ───────────────────────────────────────────────────── -->
+            <footer class="message-input-container">
+                <!-- Input Wrapper -->
+                <div class="message-input-wrapper">
+                    <!-- Voice Message Button -->
+                    <button class="input-btn" 
+                            id="voiceBtn" 
+                            title="Hold to record voice message" 
+                            aria-label="Record voice message">🎤</button>
+                    
+                    <!-- File Attachment Button -->
+                    <button class="input-btn" 
+                            id="fileBtn" 
+                            title="Attach file" 
+                            aria-label="Attach file">📎</button>
+                    
+                    <!-- Message Input Textarea -->
+                    <label for="messageInput" class="sr-only">Message</label>
+                    <textarea class="message-input" 
+                              id="messageInput" 
+                              placeholder="Type a message..." 
+                              rows="1" 
+                              aria-label="Type your message"
+                              maxlength="5000"></textarea>
+                    
+                    <!-- Send Button -->
+                    <button class="input-btn send-btn" 
+                            id="sendBtn" 
+                            aria-label="Send message">➤</button>
+                </div>
+                
+                <!-- Recording Indicator (shown during voice recording) -->
+                <div class="recording-indicator" 
+                     id="recordingIndicator" 
+                     role="status" 
+                     aria-live="assertive">
+                    <div class="recording-dot" aria-hidden="true"></div>
+                    <span>Recording voice message... Release to send</span>
+                </div>
+            </footer>
+        </main>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         CONTEXT MENU
+         Right-click menu for message actions
+         ═══════════════════════════════════════════════════════════════ -->
+    <nav class="context-menu" 
+         id="contextMenu" 
+         role="menu" 
+         aria-label="Message actions">
+        
+        <!-- Reply Option -->
+        <button class="context-menu-item" 
+                id="replyMenuItem" 
+                role="menuitem">
+            <span aria-hidden="true">↩</span> Reply
+        </button>
+        
+        <!-- Copy Text Option -->
+        <button class="context-menu-item" 
+                id="copyMenuItem" 
+                role="menuitem">
+            <span aria-hidden="true">📋</span> Copy Text
+        </button>
+        
+        <!-- Edit Option -->
+        <button class="context-menu-item" 
+                id="editMenuItem" 
+                role="menuitem">
+            <span aria-hidden="true">✏</span> Edit
+        </button>
+        
+        <!-- Delete Option (Destructive) -->
+        <button class="context-menu-item danger" 
+                id="deleteMenuItem" 
+                role="menuitem">
+            <span aria-hidden="true">🗑</span> Delete
+        </button>
+    </nav>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         REACTION PICKER
+         Emoji reactions for messages
+         ═══════════════════════════════════════════════════════════════ -->
+    <div class="reaction-picker" 
+         id="reactionPicker" 
+         role="dialog" 
+         aria-label="Add reaction">
+        
+        <button class="reaction-option" data-emoji="👍" aria-label="Thumbs up">👍</button>
+        <button class="reaction-option" data-emoji="❤️" aria-label="Heart">❤️</button>
+        <button class="reaction-option" data-emoji="😂" aria-label="Laughing">😂</button>
+        <button class="reaction-option" data-emoji="😮" aria-label="Surprised">😮</button>
+        <button class="reaction-option" data-emoji="😢" aria-label="Sad">😢</button>
+        <button class="reaction-option" data-emoji="😡" aria-label="Angry">😡</button>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         LOADING MODAL
+         Shown during connection/loading states
+         ═══════════════════════════════════════════════════════════════ -->
+    <div class="modal" 
+         id="loadingModal" 
+         role="dialog" 
+         aria-modal="true" 
+         aria-labelledby="loadingText">
+        
+        <div class="modal-content">
+            <!-- Loading Spinner -->
+            <div class="loading-spinner" 
+                 role="status" 
+                 aria-label="Loading"></div>
+            
+            <!-- Loading Message -->
+            <p id="loadingText">Connecting to room...</p>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         ROOM MENU MODAL
+         Room options and controls
+         ═══════════════════════════════════════════════════════════════ -->
+    <div class="modal" 
+         id="roomMenuModal" 
+         role="dialog" 
+         aria-modal="true" 
+         aria-labelledby="roomMenuTitle">
+        
+        <div class="modal-content">
+            <!-- Modal Title -->
+            <h3 id="roomMenuTitle">Room Options</h3>
+            
+            <!-- Menu Buttons -->
+            <div class="modal-buttons">
+                <!-- Copy Room Code -->
+                <button class="btn btn-outline btn-full" id="copyCodeBtn">
+                    <span aria-hidden="true">📋</span> Copy Room Code
+                </button>
+                
+                <!-- Share Room Link -->
+                <button class="btn btn-outline btn-full" id="shareRoomBtn">
+                    <span aria-hidden="true">📤</span> Share Room Link
+                </button>
+                
+                <!-- Admin Controls (shown only for admin) -->
+                <div class="admin-controls" id="adminControls" style="display: none;">
+                    <!-- Leave Room -->
+                    <button class="btn btn-warning btn-sm" id="leaveRoomBtn">
+                        <span aria-hidden="true">🚪</span> Leave Room
+                    </button>
+                    
+                    <!-- Close Room (Admin only) -->
+                    <button class="btn btn-danger btn-sm" id="closeRoomBtn">
+                        <span aria-hidden="true">❌</span> Close Room
+                    </button>
+                </div>
+                
+                <!-- Close Menu -->
+                <button class="btn btn-outline btn-full" id="closeMenuBtn">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         MEDIA VIEWER
+         Full-screen image/video viewer
+         ═══════════════════════════════════════════════════════════════ -->
+    <div class="media-viewer" 
+         id="mediaViewer" 
+         role="dialog" 
+         aria-modal="true" 
+         aria-label="Media viewer">
+        
+        <!-- Close Button -->
+        <button class="media-viewer-close" 
+                id="closeMediaViewer" 
+                aria-label="Close media viewer">✕</button>
+        
+        <!-- Media Content -->
+        <img class="media-viewer-content" 
+             id="mediaViewerContent" 
+             alt="" 
+             role="img">
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         HIDDEN FILE INPUT
+         Used for file upload functionality
+         ═══════════════════════════════════════════════════════════════ -->
+    <input type="file" 
+           id="fileInput" 
+           style="display: none;" 
+           accept="*/*" 
+           aria-label="File upload">
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         SIDEBAR OVERLAY
+         Mobile backdrop when sidebar is open
+         ═══════════════════════════════════════════════════════════════ -->
+    <div class="sidebar-overlay" id="sidebarOverlay" aria-hidden="true"></div>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         JAVASCRIPT DEPENDENCIES
+         ═══════════════════════════════════════════════════════════════ -->
+    
+    <!-- Socket.IO Client Library -->
+    <script src="/socket.io/socket.io.js"></script>
+    
+    <!-- Main Application Script -->
+    <script src="/front.js"></script>
+
+</body>
+</html>
