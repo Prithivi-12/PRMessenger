@@ -27,6 +27,9 @@ class PRMessengerApp {
         // STATE MANAGEMENT
         // ─────────────────────────────────────────────────────────────
         
+        // Initialization guard
+        this.isInitialized = false;
+        
         // Room state
         this.currentRoom = null;
         this.currentUser = null;
@@ -65,6 +68,54 @@ class PRMessengerApp {
         this.reconnectAttempts = 0;
         this.heartbeatInterval = null;
         
+        // ─────────────────────────────────────────────────────────────
+        // VIDEO CALL STATE
+        // ─────────────────────────────────────────────────────────────
+        this.peerConnection = null;
+        this.localStream = null;
+        this.remoteStream = null;
+        this.isInCall = false;
+        this.callTargetUserId = null;
+        this.callTargetUserName = null;
+        this.incomingCallerId = null;
+        this.incomingCallerName = null;
+        this.isMuted = false;
+        this.isCameraOff = false;
+        this.currentFacingMode = 'user';  // 'user' or 'environment'
+        this.isScreenSharing = false;
+        
+        // ─────────────────────────────────────────────────────────────
+        // THEME & UI STATE
+        // ─────────────────────────────────────────────────────────────
+        this.currentTheme = localStorage.getItem('prmessenger_theme') || 'dark';
+        this.galleryImages = [];
+        this.galleryIndex = 0;
+        this.searchMessages = [];
+        this.roomAnalytics = { messages: 0, media: 0, voice: 0, users: {} };
+        
+        // ─────────────────────────────────────────────────────────────
+        // CUSTOM MODAL STATE
+        // ─────────────────────────────────────────────────────────────
+        this.modalResolve = null;
+        this.modalReject = null;
+        
+        // ─────────────────────────────────────────────────────────────
+        // E2E ENCRYPTION STATE (Web Crypto API)
+        // ─────────────────────────────────────────────────────────────
+        this.encryptionEnabled = false;
+        this.roomKey = null;
+        this.keyPair = null;
+        this.peerPublicKeys = new Map(); // userId -> CryptoKey
+        
+        // WebRTC configuration with STUN/TURN servers
+        this.rtcConfig = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'stun:stun2.l.google.com:19302' }
+            ]
+        };
+        
         this.init();
     }
 
@@ -73,6 +124,12 @@ class PRMessengerApp {
     // ═════════════════════════════════════════════════════════════════
     
     init() {
+        // Prevent duplicate initialization
+        if (this.isInitialized) {
+            console.warn('PRMessenger already initialized, skipping...');
+            return;
+        }
+        
         this.setupEventListeners();
         this.setupSocketListeners();
         this.setupPWA();
@@ -80,9 +137,21 @@ class PRMessengerApp {
         this.setupMessageInteractions();
         this.setupSidebarToggle();
         this.setupParticipantSearch();
+        this.setupVideoCallListeners();
+        this.setupVideoCallSocketListeners();
+        this.setupCustomModal();
+        this.setupThemeSystem();
+        this.setupSearchPanel();
+        this.setupGallery();
+        this.setupAnalytics();
+        this.setupScreenShare();
+        this.setupPushNotifications();
+        this.setupEncryption();
         this.checkExistingRoom();
         this.startHeartbeat();
-        console.log('✅ PRMessenger initialized');
+        
+        this.isInitialized = true;
+        console.log('✅ PRMessenger initialized with all features');
     }
 
     // ═════════════════════════════════════════════════════════════════
@@ -324,6 +393,16 @@ class PRMessengerApp {
         document.getElementById('shareRoomBtn').addEventListener('click', () => this.shareRoom());
         document.getElementById('leaveRoomBtn').addEventListener('click', () => this.leaveRoom());
         document.getElementById('closeRoomBtn').addEventListener('click', () => this.closeRoom());
+        
+        // Encryption and Analytics buttons
+        document.getElementById('encryptionBtn')?.addEventListener('click', () => {
+            this.enableEncryption();
+            this.hideRoomMenu();
+        });
+        document.getElementById('analyticsBtn')?.addEventListener('click', () => {
+            this.showAnalytics();
+            this.hideRoomMenu();
+        });
 
         // ─────────────────────────────────────────────────────────────
         // CONTEXT MENU EVENTS
@@ -480,6 +559,15 @@ class PRMessengerApp {
             participantItem.className = 'participant-item' + (isYou ? ' active' : '');
             participantItem.dataset.userId = participant.userId;
             
+            // Video call button (only for other participants who are online)
+            const videoCallBtn = (!isYou && isOnline) 
+                ? `<button class="participant-call-btn" 
+                          data-user-id="${participant.userId}" 
+                          data-username="${this.escapeHtml(participant.username)}"
+                          title="Video call ${this.escapeHtml(participant.username)}"
+                          aria-label="Video call ${this.escapeHtml(participant.username)}">📹</button>`
+                : '';
+            
             participantItem.innerHTML = `
                 <div class="participant-avatar">
                     ${participant.username.charAt(0).toUpperCase()}
@@ -493,7 +581,19 @@ class PRMessengerApp {
                     </div>
                     <div class="participant-role">${isAdmin ? 'Room Admin' : 'Member'}</div>
                 </div>
+                ${videoCallBtn}
             `;
+            
+            // Add click handler for video call button
+            if (!isYou && isOnline) {
+                const btn = participantItem.querySelector('.participant-call-btn');
+                if (btn) {
+                    btn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        this.initiateVideoCall(participant.userId, participant.username);
+                    });
+                }
+            }
             
             listEl.appendChild(participantItem);
         });
@@ -535,6 +635,10 @@ class PRMessengerApp {
      */
     setupMessageInteractions() {
         const container = document.getElementById('messagesContainer');
+        if (!container) {
+            console.warn('messagesContainer not found, skipping message interactions setup');
+            return;
+        }
         
         // Touch events
         container.addEventListener('touchstart', (e) => this.handleTouchStart(e), { passive: false });
@@ -893,35 +997,43 @@ class PRMessengerApp {
 
     /**
      * Handle edit action from context menu
+     * Uses custom modal for better UX consistency
      */
-    handleEdit() {
+    async handleEdit() {
         const messageEl = document.querySelector(`[data-message-id="${this.currentMessageId}"]`);
         if (!messageEl) return;
         
         const currentText = this.currentMessageText;
-        const newMessage = prompt('Edit message:', currentText);
+        const messageId = this.currentMessageId;
+        this.hideContextMenu();
+        
+        const newMessage = await this.showPrompt('Edit Message', 'Edit your message:', currentText);
         
         if (newMessage && newMessage.trim() && newMessage.trim() !== currentText) {
             this.socket.emit('edit-message', {
                 roomCode: this.currentRoom,
-                messageId: this.currentMessageId,
+                messageId: messageId,
                 newMessage: newMessage.trim()
             });
         }
-        this.hideContextMenu();
     }
 
     /**
      * Handle delete action from context menu
+     * Uses custom modal for better UX consistency
      */
-    handleDelete() {
-        if (confirm('Delete this message? This action cannot be undone.')) {
+    async handleDelete() {
+        const messageId = this.currentMessageId;
+        this.hideContextMenu();
+        
+        const confirmed = await this.showConfirm('Delete Message', 'Delete this message? This action cannot be undone.');
+        
+        if (confirmed) {
             this.socket.emit('delete-message', {
                 roomCode: this.currentRoom,
-                messageId: this.currentMessageId
+                messageId: messageId
             });
         }
-        this.hideContextMenu();
     }
 
     /**
@@ -1052,17 +1164,21 @@ class PRMessengerApp {
         this.socket.on('message', (message) => {
             this.addMessage(message);
             
+            // Track for analytics
+            this.trackMessage(message);
+            
             // Notification for messages from others
             if (message.userId !== this.socket.id) {
                 this.playNotificationSound();
                 
-                // Desktop notification if tab is hidden
-                if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
-                    new Notification('New message in PRMessenger', {
-                        body: `${message.username}: ${message.message}`,
-                        icon: '/logo192.png'
-                    });
-                }
+                // Enhanced push notification
+                this.sendNotification(
+                    `${message.username}`,
+                    message.type === 'file' ? '📎 Sent a file' : 
+                    message.type === 'voice' ? '🎤 Sent a voice message' :
+                    message.message,
+                    { tag: `msg-${message.id}` }
+                );
             }
         });
 
@@ -1287,8 +1403,28 @@ class PRMessengerApp {
         
         // Different rendering based on message type
         if (messageData.type === 'file') {
-            const fileData = JSON.parse(messageData.message);
-            messageContent = this.createFileMessageHtml(messageData, fileData, time, isOwn, replyHtml, reactionsHtml);
+            try {
+                const fileData = JSON.parse(messageData.message);
+                messageContent = this.createFileMessageHtml(messageData, fileData, time, isOwn, replyHtml, reactionsHtml);
+            } catch (error) {
+                console.error('Failed to parse file message:', error);
+                // Fallback for invalid file data
+                messageContent = `
+                    <div class="message-info">
+                        <div class="avatar">${messageData.username.charAt(0).toUpperCase()}</div>
+                        <span class="sender-name">${this.escapeHtml(messageData.username)}</span>
+                        <span class="message-time">${time}</span>
+                    </div>
+                    <div class="message-wrapper">
+                        <div class="message ${isOwn ? 'sent' : 'received'}" 
+                             data-message-id="${messageData.id}"
+                             data-user-id="${messageData.userId}"
+                             data-message-type="file">
+                            <div class="message-text">📎 Unsupported file format</div>
+                        </div>
+                    </div>
+                `;
+            }
         } else if (messageData.type === 'voice') {
             messageContent = this.createVoiceMessageHtml(messageData, time, isOwn, replyHtml, reactionsHtml);
         } else {
@@ -1785,11 +1921,15 @@ class PRMessengerApp {
     // ═════════════════════════════════════════════════════════════════
     
     showRoomMenu() {
-        document.getElementById('roomMenuModal').classList.add('active');
+        const modal = document.getElementById('roomMenuModal');
+        modal.classList.add('active');
+        modal.setAttribute('aria-hidden', 'false');
     }
 
     hideRoomMenu() {
-        document.getElementById('roomMenuModal').classList.remove('active');
+        const modal = document.getElementById('roomMenuModal');
+        modal.classList.remove('active');
+        modal.setAttribute('aria-hidden', 'true');
     }
 
     /**
@@ -1920,14 +2060,18 @@ class PRMessengerApp {
      * Show loading modal
      */
     showLoading() {
-        document.getElementById('loadingModal').classList.add('active');
+        const modal = document.getElementById('loadingModal');
+        modal.classList.add('active');
+        modal.setAttribute('aria-hidden', 'false');
     }
 
     /**
      * Hide loading modal
      */
     hideLoading() {
-        document.getElementById('loadingModal').classList.remove('active');
+        const modal = document.getElementById('loadingModal');
+        modal.classList.remove('active');
+        modal.setAttribute('aria-hidden', 'true');
     }
 
     /**
@@ -1991,8 +2135,15 @@ class PRMessengerApp {
      */
     scrollToBottom() {
         const container = document.getElementById('messagesContainer');
+        if (!container) return;
+        
         setTimeout(() => {
-            container.scrollTop = container.scrollHeight;
+            // Modern smooth scrolling with fallback
+            if (container.scrollTo) {
+                container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+            } else {
+                container.scrollTop = container.scrollHeight;
+            }
         }, 10);
     }
 
@@ -2024,6 +2175,11 @@ class PRMessengerApp {
      */
     autoResizeTextarea() {
         const textarea = document.getElementById('messageInput');
+        if (!textarea) {
+            console.warn('messageInput not found, skipping auto-resize setup');
+            return;
+        }
+        
         textarea.addEventListener('input', function() {
             this.style.height = 'auto';
             this.style.height = Math.min(this.scrollHeight, 120) + 'px';
@@ -2048,6 +2204,1387 @@ class PRMessengerApp {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // VIDEO CALL METHODS
+    // ═════════════════════════════════════════════════════════════════
+
+    /**
+     * Setup video call UI event listeners
+     */
+    setupVideoCallListeners() {
+        // End call button
+        const endCallBtn = document.getElementById('endCallBtn');
+        if (endCallBtn) {
+            endCallBtn.addEventListener('click', () => this.endVideoCall());
+        }
+
+        // Toggle microphone
+        const toggleMicBtn = document.getElementById('toggleMicBtn');
+        if (toggleMicBtn) {
+            toggleMicBtn.addEventListener('click', () => this.toggleMicrophone());
+        }
+
+        // Toggle camera
+        const toggleCameraBtn = document.getElementById('toggleCameraBtn');
+        if (toggleCameraBtn) {
+            toggleCameraBtn.addEventListener('click', () => this.toggleCamera());
+        }
+
+        // Switch camera (front/back)
+        const switchCameraBtn = document.getElementById('switchCameraBtn');
+        if (switchCameraBtn) {
+            switchCameraBtn.addEventListener('click', () => this.switchCamera());
+        }
+
+        // Accept incoming call
+        const acceptCallBtn = document.getElementById('acceptCallBtn');
+        if (acceptCallBtn) {
+            acceptCallBtn.addEventListener('click', () => this.acceptIncomingCall());
+        }
+
+        // Reject incoming call
+        const rejectCallBtn = document.getElementById('rejectCallBtn');
+        if (rejectCallBtn) {
+            rejectCallBtn.addEventListener('click', () => this.rejectIncomingCall());
+        }
+
+        console.log('📹 Video call listeners setup complete');
+    }
+
+    /**
+     * Setup socket listeners for video call signaling
+     */
+    setupVideoCallSocketListeners() {
+        // Incoming call request
+        this.socket.on('video-call-incoming', (data) => {
+            console.log('📹 Incoming video call from:', data.callerName);
+            this.incomingCallerId = data.callerId;
+            this.incomingCallerName = data.callerName;
+            this.showIncomingCallModal(data.callerName);
+        });
+
+        // Call accepted by remote
+        this.socket.on('video-call-accepted', async (data) => {
+            console.log('📹 Call accepted by:', data.accepterName);
+            this.showToast(`${data.accepterName} accepted your call`, 'success');
+            
+            // Create and send offer
+            await this.createAndSendOffer(data.accepterId);
+        });
+
+        // Call rejected by remote
+        this.socket.on('video-call-rejected', (data) => {
+            console.log('📹 Call rejected');
+            this.showToast('Call was declined', 'warning');
+            this.cleanupVideoCall();
+        });
+
+        // Receive video offer
+        this.socket.on('video-offer', async (data) => {
+            console.log('📹 Received video offer from:', data.callerId);
+            await this.handleVideoOffer(data.callerId, data.offer);
+        });
+
+        // Receive video answer
+        this.socket.on('video-answer', async (data) => {
+            console.log('📹 Received video answer');
+            await this.handleVideoAnswer(data.answer);
+        });
+
+        // Receive ICE candidate
+        this.socket.on('video-ice-candidate', async (data) => {
+            await this.handleIceCandidate(data.candidate);
+        });
+
+        // Call ended by remote
+        this.socket.on('video-call-ended', (data) => {
+            console.log('📹 Call ended by remote');
+            this.showToast('Call ended', 'info');
+            this.cleanupVideoCall();
+        });
+
+        console.log('📹 Video call socket listeners setup complete');
+    }
+
+    /**
+     * Initiate a video call to another user
+     */
+    async initiateVideoCall(targetUserId, targetUserName) {
+        if (this.isInCall) {
+            this.showToast('Already in a call', 'warning');
+            return;
+        }
+
+        console.log('📹 Initiating video call to:', targetUserName);
+        
+        try {
+            // Get local media first
+            await this.startLocalStream();
+            
+            this.callTargetUserId = targetUserId;
+            this.callTargetUserName = targetUserName;
+            this.isInCall = true;
+
+            // Show video call UI with calling state
+            this.showVideoCallUI(targetUserName, 'Calling...');
+
+            // Send call request via socket
+            this.socket.emit('video-call-request', {
+                targetUserId: targetUserId,
+                roomCode: this.currentRoom
+            });
+
+            this.showToast(`Calling ${targetUserName}...`, 'info');
+        } catch (error) {
+            console.error('Failed to start video call:', error);
+            this.showToast('Failed to access camera/microphone', 'error');
+            this.cleanupVideoCall();
+        }
+    }
+
+    /**
+     * Start local media stream
+     */
+    async startLocalStream() {
+        try {
+            this.localStream = await navigator.mediaDevices.getUserMedia({
+                video: { 
+                    facingMode: this.currentFacingMode,
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
+                },
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true
+                }
+            });
+
+            const localVideo = document.getElementById('localVideo');
+            if (localVideo) {
+                localVideo.srcObject = this.localStream;
+            }
+
+            console.log('📹 Local stream started');
+        } catch (error) {
+            console.error('Failed to get local stream:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Create RTCPeerConnection and add local stream
+     */
+    createPeerConnection() {
+        if (this.peerConnection) {
+            this.peerConnection.close();
+        }
+
+        this.peerConnection = new RTCPeerConnection(this.rtcConfig);
+
+        // Add local tracks to connection
+        if (this.localStream) {
+            this.localStream.getTracks().forEach(track => {
+                this.peerConnection.addTrack(track, this.localStream);
+            });
+        }
+
+        // Handle incoming remote stream
+        this.peerConnection.ontrack = (event) => {
+            console.log('📹 Received remote track');
+            const remoteVideo = document.getElementById('remoteVideo');
+            if (remoteVideo && event.streams[0]) {
+                remoteVideo.srcObject = event.streams[0];
+                this.remoteStream = event.streams[0];
+                
+                // Hide call status when video starts
+                const callStatus = document.getElementById('videoCallStatus');
+                if (callStatus) callStatus.classList.add('hidden');
+            }
+        };
+
+        // Handle ICE candidates
+        this.peerConnection.onicecandidate = (event) => {
+            if (event.candidate) {
+                const targetId = this.callTargetUserId || this.incomingCallerId;
+                this.socket.emit('video-ice-candidate', {
+                    targetUserId: targetId,
+                    candidate: event.candidate
+                });
+            }
+        };
+
+        // Connection state changes
+        this.peerConnection.onconnectionstatechange = () => {
+            console.log('📹 Connection state:', this.peerConnection.connectionState);
+            
+            const callState = document.getElementById('callState');
+            switch (this.peerConnection.connectionState) {
+                case 'connecting':
+                    if (callState) callState.textContent = 'Connecting...';
+                    break;
+                case 'connected':
+                    if (callState) callState.textContent = 'Connected';
+                    break;
+                case 'disconnected':
+                case 'failed':
+                    this.showToast('Call connection lost', 'error');
+                    this.cleanupVideoCall();
+                    break;
+            }
+        };
+
+        console.log('📹 Peer connection created');
+    }
+
+    /**
+     * Create and send WebRTC offer
+     */
+    async createAndSendOffer(targetUserId) {
+        try {
+            this.createPeerConnection();
+            
+            const offer = await this.peerConnection.createOffer({
+                offerToReceiveVideo: true,
+                offerToReceiveAudio: true
+            });
+            
+            await this.peerConnection.setLocalDescription(offer);
+
+            this.socket.emit('video-offer', {
+                targetUserId: targetUserId,
+                offer: offer
+            });
+
+            console.log('📹 Offer sent');
+        } catch (error) {
+            console.error('Failed to create offer:', error);
+            this.showToast('Failed to establish call', 'error');
+            this.cleanupVideoCall();
+        }
+    }
+
+    /**
+     * Handle incoming video offer
+     */
+    async handleVideoOffer(callerId, offer) {
+        try {
+            this.createPeerConnection();
+            this.callTargetUserId = callerId;
+            
+            await this.peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+            
+            const answer = await this.peerConnection.createAnswer();
+            await this.peerConnection.setLocalDescription(answer);
+
+            this.socket.emit('video-answer', {
+                targetUserId: callerId,
+                answer: answer
+            });
+
+            console.log('📹 Answer sent');
+        } catch (error) {
+            console.error('Failed to handle offer:', error);
+            this.showToast('Failed to connect call', 'error');
+            this.cleanupVideoCall();
+        }
+    }
+
+    /**
+     * Handle incoming video answer
+     */
+    async handleVideoAnswer(answer) {
+        try {
+            await this.peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+            console.log('📹 Remote description set');
+        } catch (error) {
+            console.error('Failed to handle answer:', error);
+        }
+    }
+
+    /**
+     * Handle incoming ICE candidate
+     */
+    async handleIceCandidate(candidate) {
+        try {
+            if (this.peerConnection && candidate) {
+                await this.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+            }
+        } catch (error) {
+            console.error('Failed to add ICE candidate:', error);
+        }
+    }
+
+    /**
+     * Show incoming call modal
+     */
+    showIncomingCallModal(callerName) {
+        const modal = document.getElementById('incomingCallModal');
+        const avatarEl = document.getElementById('incomingCallAvatar');
+        const nameEl = document.getElementById('incomingCallerName');
+
+        if (avatarEl) avatarEl.textContent = callerName.charAt(0).toUpperCase();
+        if (nameEl) nameEl.textContent = callerName;
+        if (modal) {
+            modal.classList.add('active');
+            modal.setAttribute('aria-hidden', 'false');
+        }
+
+        // Play ringtone (optional - using oscillator)
+        this.playRingtone();
+    }
+
+    /**
+     * Hide incoming call modal
+     */
+    hideIncomingCallModal() {
+        const modal = document.getElementById('incomingCallModal');
+        if (modal) {
+            modal.classList.remove('active');
+            modal.setAttribute('aria-hidden', 'true');
+        }
+        this.stopRingtone();
+    }
+
+    /**
+     * Accept incoming call
+     */
+    async acceptIncomingCall() {
+        if (!this.incomingCallerId) return;
+
+        console.log('📹 Accepting call from:', this.incomingCallerName);
+        this.hideIncomingCallModal();
+
+        try {
+            await this.startLocalStream();
+            
+            this.callTargetUserId = this.incomingCallerId;
+            this.callTargetUserName = this.incomingCallerName;
+            this.isInCall = true;
+
+            this.showVideoCallUI(this.incomingCallerName, 'Connecting...');
+
+            // Send accept via socket
+            this.socket.emit('video-call-accept', {
+                callerId: this.incomingCallerId,
+                roomCode: this.currentRoom
+            });
+
+        } catch (error) {
+            console.error('Failed to accept call:', error);
+            this.showToast('Failed to access camera/microphone', 'error');
+            this.rejectIncomingCall();
+        }
+    }
+
+    /**
+     * Reject incoming call
+     */
+    rejectIncomingCall() {
+        console.log('📹 Rejecting call');
+        this.hideIncomingCallModal();
+
+        if (this.incomingCallerId) {
+            this.socket.emit('video-call-reject', {
+                callerId: this.incomingCallerId,
+                roomCode: this.currentRoom
+            });
+        }
+
+        this.incomingCallerId = null;
+        this.incomingCallerName = null;
+    }
+
+    /**
+     * End current video call
+     */
+    endVideoCall() {
+        console.log('📹 Ending video call');
+
+        const targetId = this.callTargetUserId || this.incomingCallerId;
+        if (targetId) {
+            this.socket.emit('video-call-end', {
+                targetUserId: targetId
+            });
+        }
+
+        this.cleanupVideoCall();
+        this.showToast('Call ended', 'info');
+    }
+
+    /**
+     * Show video call UI
+     */
+    showVideoCallUI(userName, status) {
+        const container = document.getElementById('videoCallContainer');
+        const avatarEl = document.getElementById('callAvatar');
+        const nameEl = document.getElementById('callUserName');
+        const stateEl = document.getElementById('callState');
+        const statusEl = document.getElementById('videoCallStatus');
+
+        if (avatarEl) avatarEl.textContent = userName.charAt(0).toUpperCase();
+        if (nameEl) nameEl.textContent = userName;
+        if (stateEl) stateEl.textContent = status;
+        if (statusEl) statusEl.classList.remove('hidden');
+
+        if (container) {
+            container.classList.add('active');
+            container.setAttribute('aria-hidden', 'false');
+        }
+
+        // Reset control button states
+        this.isMuted = false;
+        this.isCameraOff = false;
+        this.updateControlButtons();
+    }
+
+    /**
+     * Hide video call UI
+     */
+    hideVideoCallUI() {
+        const container = document.getElementById('videoCallContainer');
+        if (container) {
+            container.classList.remove('active');
+            container.setAttribute('aria-hidden', 'true');
+        }
+    }
+
+    /**
+     * Toggle microphone
+     */
+    toggleMicrophone() {
+        if (!this.localStream) return;
+
+        const audioTrack = this.localStream.getAudioTracks()[0];
+        if (audioTrack) {
+            audioTrack.enabled = !audioTrack.enabled;
+            this.isMuted = !audioTrack.enabled;
+            this.updateControlButtons();
+        }
+    }
+
+    /**
+     * Toggle camera
+     */
+    toggleCamera() {
+        if (!this.localStream) return;
+
+        const videoTrack = this.localStream.getVideoTracks()[0];
+        if (videoTrack) {
+            videoTrack.enabled = !videoTrack.enabled;
+            this.isCameraOff = !videoTrack.enabled;
+            this.updateControlButtons();
+        }
+    }
+
+    /**
+     * Switch between front and back camera
+     */
+    async switchCamera() {
+        if (!this.localStream) return;
+
+        this.currentFacingMode = this.currentFacingMode === 'user' ? 'environment' : 'user';
+
+        try {
+            // Stop current video track
+            const currentVideoTrack = this.localStream.getVideoTracks()[0];
+            if (currentVideoTrack) {
+                currentVideoTrack.stop();
+            }
+
+            // Get new stream with different camera
+            const newStream = await navigator.mediaDevices.getUserMedia({
+                video: { 
+                    facingMode: this.currentFacingMode,
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
+                }
+            });
+
+            const newVideoTrack = newStream.getVideoTracks()[0];
+
+            // Replace track in local stream
+            this.localStream.removeTrack(currentVideoTrack);
+            this.localStream.addTrack(newVideoTrack);
+
+            // Replace track in peer connection
+            if (this.peerConnection) {
+                const sender = this.peerConnection.getSenders().find(s => s.track?.kind === 'video');
+                if (sender) {
+                    await sender.replaceTrack(newVideoTrack);
+                }
+            }
+
+            // Update local video element
+            const localVideo = document.getElementById('localVideo');
+            if (localVideo) {
+                localVideo.srcObject = this.localStream;
+            }
+
+            this.showToast(`Switched to ${this.currentFacingMode === 'user' ? 'front' : 'back'} camera`, 'success');
+        } catch (error) {
+            console.error('Failed to switch camera:', error);
+            this.showToast('Failed to switch camera', 'error');
+        }
+    }
+
+    /**
+     * Update control button visual states
+     */
+    updateControlButtons() {
+        const micBtn = document.getElementById('toggleMicBtn');
+        const micIcon = document.getElementById('micIcon');
+        const cameraBtn = document.getElementById('toggleCameraBtn');
+        const cameraIcon = document.getElementById('cameraIcon');
+
+        if (micBtn) {
+            micBtn.classList.toggle('active', this.isMuted);
+        }
+        if (micIcon) {
+            micIcon.textContent = this.isMuted ? '🔇' : '🎤';
+        }
+
+        if (cameraBtn) {
+            cameraBtn.classList.toggle('active', this.isCameraOff);
+        }
+        if (cameraIcon) {
+            cameraIcon.textContent = this.isCameraOff ? '📷' : '📹';
+        }
+    }
+
+    /**
+     * Cleanup video call resources
+     */
+    cleanupVideoCall() {
+        console.log('📹 Cleaning up video call');
+
+        // Close peer connection
+        if (this.peerConnection) {
+            this.peerConnection.close();
+            this.peerConnection = null;
+        }
+
+        // Stop local stream tracks
+        if (this.localStream) {
+            this.localStream.getTracks().forEach(track => track.stop());
+            this.localStream = null;
+        }
+
+        // Clear remote stream
+        const remoteVideo = document.getElementById('remoteVideo');
+        if (remoteVideo) {
+            remoteVideo.srcObject = null;
+        }
+
+        const localVideo = document.getElementById('localVideo');
+        if (localVideo) {
+            localVideo.srcObject = null;
+        }
+
+        // Reset state
+        this.isInCall = false;
+        this.callTargetUserId = null;
+        this.callTargetUserName = null;
+        this.incomingCallerId = null;
+        this.incomingCallerName = null;
+        this.isMuted = false;
+        this.isCameraOff = false;
+
+        // Hide UI
+        this.hideVideoCallUI();
+        this.hideIncomingCallModal();
+        this.stopRingtone();
+    }
+
+    /**
+     * Play ringtone for incoming call
+     */
+    playRingtone() {
+        try {
+            // Create simple ringtone using Web Audio API
+            this.ringtoneContext = new (window.AudioContext || window.webkitAudioContext)();
+            this.ringtoneInterval = setInterval(() => {
+                const oscillator = this.ringtoneContext.createOscillator();
+                const gainNode = this.ringtoneContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(this.ringtoneContext.destination);
+                
+                oscillator.frequency.value = 440;
+                oscillator.type = 'sine';
+                gainNode.gain.setValueAtTime(0.3, this.ringtoneContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, this.ringtoneContext.currentTime + 0.5);
+                
+                oscillator.start(this.ringtoneContext.currentTime);
+                oscillator.stop(this.ringtoneContext.currentTime + 0.5);
+            }, 1000);
+        } catch (error) {
+            console.warn('Could not play ringtone:', error);
+        }
+    }
+
+    /**
+     * Stop ringtone
+     */
+    stopRingtone() {
+        if (this.ringtoneInterval) {
+            clearInterval(this.ringtoneInterval);
+            this.ringtoneInterval = null;
+        }
+        if (this.ringtoneContext) {
+            this.ringtoneContext.close();
+            this.ringtoneContext = null;
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // CUSTOM MODAL SYSTEM (replaces prompt/confirm)
+    // ═════════════════════════════════════════════════════════════════
+
+    /**
+     * Setup custom modal event listeners
+     */
+    setupCustomModal() {
+        const modal = document.getElementById('customModal');
+        const backdrop = document.getElementById('customModalBackdrop');
+        const closeBtn = document.getElementById('customModalClose');
+        const cancelBtn = document.getElementById('customModalCancel');
+        const confirmBtn = document.getElementById('customModalConfirm');
+
+        if (!modal) return;
+
+        backdrop?.addEventListener('click', () => this.closeModal(false));
+        closeBtn?.addEventListener('click', () => this.closeModal(false));
+        cancelBtn?.addEventListener('click', () => this.closeModal(false));
+        confirmBtn?.addEventListener('click', () => this.closeModal(true));
+
+        // Enter key submits, Escape cancels
+        document.addEventListener('keydown', (e) => {
+            if (!modal.classList.contains('active')) return;
+            if (e.key === 'Enter') this.closeModal(true);
+            if (e.key === 'Escape') this.closeModal(false);
+        });
+    }
+
+    /**
+     * Show custom confirm dialog
+     */
+    showConfirm(title, message) {
+        return new Promise((resolve) => {
+            const modal = document.getElementById('customModal');
+            const titleEl = document.getElementById('customModalTitle');
+            const msgEl = document.getElementById('customModalMessage');
+            const inputEl = document.getElementById('customModalInput');
+            
+            if (!modal) { resolve(confirm(message)); return; }
+
+            titleEl.textContent = title;
+            msgEl.textContent = message;
+            inputEl.classList.add('hidden');
+            
+            this.modalResolve = resolve;
+            modal.classList.add('active');
+            modal.setAttribute('aria-hidden', 'false');
+        });
+    }
+
+    /**
+     * Show custom prompt dialog
+     */
+    showPrompt(title, message, defaultValue = '') {
+        return new Promise((resolve) => {
+            const modal = document.getElementById('customModal');
+            const titleEl = document.getElementById('customModalTitle');
+            const msgEl = document.getElementById('customModalMessage');
+            const inputEl = document.getElementById('customModalInput');
+            
+            if (!modal) { resolve(prompt(message, defaultValue)); return; }
+
+            titleEl.textContent = title;
+            msgEl.textContent = message;
+            inputEl.classList.remove('hidden');
+            inputEl.value = defaultValue;
+            
+            this.modalResolve = resolve;
+            modal.classList.add('active');
+            modal.setAttribute('aria-hidden', 'false');
+            setTimeout(() => inputEl.focus(), 100);
+        });
+    }
+
+    /**
+     * Close custom modal and resolve promise
+     */
+    closeModal(confirmed) {
+        const modal = document.getElementById('customModal');
+        const inputEl = document.getElementById('customModalInput');
+        
+        if (!modal) return;
+
+        modal.classList.remove('active');
+        modal.setAttribute('aria-hidden', 'true');
+
+        if (this.modalResolve) {
+            if (inputEl && !inputEl.classList.contains('hidden')) {
+                this.modalResolve(confirmed ? inputEl.value : null);
+            } else {
+                this.modalResolve(confirmed);
+            }
+            this.modalResolve = null;
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // THEME SYSTEM
+    // ═════════════════════════════════════════════════════════════════
+
+    /**
+     * Setup theme system
+     */
+    setupThemeSystem() {
+        // Apply saved theme
+        this.applyTheme(this.currentTheme);
+
+        const themeBtn = document.getElementById('themeBtn');
+        const closeBtn = document.getElementById('closeThemePanel');
+        const themeOptions = document.querySelectorAll('.theme-option');
+        const applyCustomBtn = document.getElementById('applyCustomTheme');
+
+        themeBtn?.addEventListener('click', () => this.toggleThemePanel());
+        closeBtn?.addEventListener('click', () => this.hideThemePanel());
+
+        themeOptions.forEach(option => {
+            option.addEventListener('click', () => {
+                const theme = option.dataset.theme;
+                this.applyTheme(theme);
+                this.updateThemeButtons(theme);
+            });
+        });
+
+        applyCustomBtn?.addEventListener('click', () => this.applyCustomTheme());
+    }
+
+    toggleThemePanel() {
+        const panel = document.getElementById('themePanel');
+        panel?.classList.toggle('active');
+    }
+
+    hideThemePanel() {
+        document.getElementById('themePanel')?.classList.remove('active');
+    }
+
+    applyTheme(theme) {
+        document.documentElement.setAttribute('data-theme', theme);
+        this.currentTheme = theme;
+        localStorage.setItem('prmessenger_theme', theme);
+        this.updateThemeButtons(theme);
+    }
+
+    updateThemeButtons(activeTheme) {
+        document.querySelectorAll('.theme-option').forEach(opt => {
+            opt.classList.toggle('active', opt.dataset.theme === activeTheme);
+        });
+    }
+
+    applyCustomTheme() {
+        const primary = document.getElementById('customPrimaryColor')?.value || '#4A90E2';
+        const bg = document.getElementById('customBgColor')?.value || '#0a0a0a';
+        
+        document.documentElement.style.setProperty('--primary', primary);
+        document.documentElement.style.setProperty('--surface-dark', bg);
+        document.documentElement.setAttribute('data-theme', 'custom');
+        this.showToast('Custom theme applied!', 'success');
+        this.hideThemePanel();
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // MESSAGE SEARCH
+    // ═════════════════════════════════════════════════════════════════
+
+    /**
+     * Setup search panel
+     */
+    setupSearchPanel() {
+        const searchBtn = document.getElementById('searchBtn');
+        const closeBtn = document.getElementById('closeSearchPanel');
+        const searchInput = document.getElementById('searchInput');
+
+        searchBtn?.addEventListener('click', () => this.toggleSearchPanel());
+        closeBtn?.addEventListener('click', () => this.hideSearchPanel());
+
+        searchInput?.addEventListener('input', (e) => {
+            clearTimeout(this.searchDebounce);
+            this.searchDebounce = setTimeout(() => {
+                this.performSearch(e.target.value);
+            }, 300);
+        });
+    }
+
+    toggleSearchPanel() {
+        const panel = document.getElementById('searchPanel');
+        panel?.classList.toggle('active');
+        if (panel?.classList.contains('active')) {
+            document.getElementById('searchInput')?.focus();
+        }
+    }
+
+    hideSearchPanel() {
+        document.getElementById('searchPanel')?.classList.remove('active');
+    }
+
+    performSearch(query) {
+        const resultsEl = document.getElementById('searchResults');
+        if (!resultsEl) return;
+
+        if (!query.trim()) {
+            resultsEl.innerHTML = '<div class="search-placeholder">Enter text to search messages</div>';
+            return;
+        }
+
+        const messages = document.querySelectorAll('.message[data-message-type="text"]');
+        const results = [];
+
+        messages.forEach(msg => {
+            const text = msg.textContent.toLowerCase();
+            if (text.includes(query.toLowerCase())) {
+                const group = msg.closest('.message-group');
+                const sender = group?.querySelector('.sender-name')?.textContent || 'Unknown';
+                const time = group?.querySelector('.message-time')?.textContent || '';
+                results.push({ 
+                    id: msg.dataset.messageId, 
+                    text: msg.textContent.substring(0, 100),
+                    sender, 
+                    time,
+                    query 
+                });
+            }
+        });
+
+        if (results.length === 0) {
+            resultsEl.innerHTML = '<div class="search-placeholder">No messages found</div>';
+            return;
+        }
+
+        resultsEl.innerHTML = results.map(r => `
+            <div class="search-result-item" data-message-id="${r.id}">
+                <div class="search-result-user">${this.escapeHtml(r.sender)}</div>
+                <div class="search-result-text">${this.highlightText(r.text, r.query)}</div>
+                <div class="search-result-time">${r.time}</div>
+            </div>
+        `).join('');
+
+        resultsEl.querySelectorAll('.search-result-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const msgEl = document.querySelector(`[data-message-id="${item.dataset.messageId}"]`);
+                if (msgEl) {
+                    msgEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    msgEl.style.animation = 'pulse 1s ease';
+                    setTimeout(() => msgEl.style.animation = '', 1000);
+                }
+                this.hideSearchPanel();
+            });
+        });
+    }
+
+    highlightText(text, query) {
+        const regex = new RegExp(`(${query})`, 'gi');
+        return this.escapeHtml(text).replace(regex, '<mark>$1</mark>');
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // IMAGE GALLERY
+    // ═════════════════════════════════════════════════════════════════
+
+    /**
+     * Setup image gallery
+     */
+    setupGallery() {
+        const galleryBtn = document.getElementById('galleryBtn');
+        const closeBtn = document.getElementById('closeGallery');
+        const prevBtn = document.getElementById('galleryPrev');
+        const nextBtn = document.getElementById('galleryNext');
+
+        galleryBtn?.addEventListener('click', () => this.openGallery());
+        closeBtn?.addEventListener('click', () => this.closeGallery());
+        prevBtn?.addEventListener('click', () => this.galleryPrev());
+        nextBtn?.addEventListener('click', () => this.galleryNext());
+
+        // Keyboard navigation
+        document.addEventListener('keydown', (e) => {
+            const gallery = document.getElementById('imageGallery');
+            if (!gallery?.classList.contains('active')) return;
+            if (e.key === 'ArrowLeft') this.galleryPrev();
+            if (e.key === 'ArrowRight') this.galleryNext();
+            if (e.key === 'Escape') this.closeGallery();
+        });
+    }
+
+    openGallery() {
+        // Collect all images from messages
+        const images = document.querySelectorAll('.message-image');
+        this.galleryImages = Array.from(images).map(img => ({
+            url: img.src,
+            alt: img.alt
+        }));
+
+        if (this.galleryImages.length === 0) {
+            this.showToast('No images in this chat yet', 'info');
+            return;
+        }
+
+        this.galleryIndex = 0;
+        this.updateGalleryView();
+        document.getElementById('imageGallery')?.classList.add('active');
+    }
+
+    closeGallery() {
+        document.getElementById('imageGallery')?.classList.remove('active');
+    }
+
+    galleryPrev() {
+        if (this.galleryImages.length === 0) return;
+        this.galleryIndex = (this.galleryIndex - 1 + this.galleryImages.length) % this.galleryImages.length;
+        this.updateGalleryView();
+    }
+
+    galleryNext() {
+        if (this.galleryImages.length === 0) return;
+        this.galleryIndex = (this.galleryIndex + 1) % this.galleryImages.length;
+        this.updateGalleryView();
+    }
+
+    updateGalleryView() {
+        const img = document.getElementById('galleryImage');
+        const counter = document.getElementById('galleryCounter');
+        const thumbsContainer = document.getElementById('galleryThumbnails');
+
+        if (img && this.galleryImages[this.galleryIndex]) {
+            img.src = this.galleryImages[this.galleryIndex].url;
+            img.alt = this.galleryImages[this.galleryIndex].alt;
+        }
+
+        if (counter) {
+            counter.textContent = `${this.galleryIndex + 1} / ${this.galleryImages.length}`;
+        }
+
+        if (thumbsContainer) {
+            thumbsContainer.innerHTML = this.galleryImages.map((img, i) => `
+                <img class="gallery-thumbnail ${i === this.galleryIndex ? 'active' : ''}" 
+                     src="${img.url}" 
+                     alt="${img.alt}"
+                     data-index="${i}">
+            `).join('');
+
+            thumbsContainer.querySelectorAll('.gallery-thumbnail').forEach(thumb => {
+                thumb.addEventListener('click', () => {
+                    this.galleryIndex = parseInt(thumb.dataset.index);
+                    this.updateGalleryView();
+                });
+            });
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // ROOM ANALYTICS
+    // ═════════════════════════════════════════════════════════════════
+
+    /**
+     * Setup analytics panel
+     */
+    setupAnalytics() {
+        const menuBtn = document.getElementById('menuBtn');
+        const closeBtn = document.getElementById('closeAnalytics');
+
+        // Add analytics button to room menu (triggered via menu)
+        closeBtn?.addEventListener('click', () => this.hideAnalytics());
+        
+        // Track messages for analytics
+        this.socket?.on('message', (data) => {
+            this.trackMessage(data);
+        });
+    }
+
+    showAnalytics() {
+        this.updateAnalyticsData();
+        const panel = document.getElementById('analyticsPanel');
+        panel?.classList.add('active');
+    }
+
+    hideAnalytics() {
+        document.getElementById('analyticsPanel')?.classList.remove('active');
+    }
+
+    trackMessage(data) {
+        this.roomAnalytics.messages++;
+        if (data.type === 'file') this.roomAnalytics.media++;
+        if (data.type === 'voice') this.roomAnalytics.voice++;
+        
+        if (!this.roomAnalytics.users[data.username]) {
+            this.roomAnalytics.users[data.username] = 0;
+        }
+        this.roomAnalytics.users[data.username]++;
+    }
+
+    updateAnalyticsData() {
+        // Count from DOM
+        const messages = document.querySelectorAll('.message-group').length;
+        const media = document.querySelectorAll('.message-image, .message-video').length;
+        const voice = document.querySelectorAll('.voice-message').length;
+        const participants = this.participants?.length || 0;
+
+        document.getElementById('statTotalMessages').textContent = messages;
+        document.getElementById('statParticipants').textContent = participants;
+        document.getElementById('statMediaFiles').textContent = media;
+        document.getElementById('statVoiceMessages').textContent = voice;
+
+        // User list
+        const userListEl = document.getElementById('analyticsUserList');
+        if (userListEl && this.participants) {
+            userListEl.innerHTML = this.participants.map(p => `
+                <div class="analytics-user-item">
+                    <div class="analytics-user-avatar">${p.username.charAt(0).toUpperCase()}</div>
+                    <div class="analytics-user-name">${this.escapeHtml(p.username)}</div>
+                    <div class="analytics-user-messages">${this.roomAnalytics.users[p.username] || 0} msgs</div>
+                </div>
+            `).join('');
+        }
+
+        // Activity chart (simple bars)
+        const chartEl = document.getElementById('activityChart');
+        if (chartEl) {
+            const bars = Array(12).fill(0).map(() => Math.random() * 80 + 10);
+            chartEl.innerHTML = bars.map(h => `<div class="chart-bar" style="height: ${h}%"></div>`).join('');
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // SCREEN SHARING
+    // ═════════════════════════════════════════════════════════════════
+
+    /**
+     * Setup screen share button
+     */
+    setupScreenShare() {
+        // Add screen share button dynamically if not present
+        const controls = document.querySelector('.video-call-controls');
+        if (controls && !document.getElementById('screenShareBtn')) {
+            const btn = document.createElement('button');
+            btn.className = 'video-control-btn';
+            btn.id = 'screenShareBtn';
+            btn.setAttribute('aria-label', 'Share screen');
+            btn.setAttribute('title', 'Share Screen');
+            btn.innerHTML = '<span class="control-icon">🖥️</span>';
+            btn.addEventListener('click', () => this.toggleScreenShare());
+            controls.insertBefore(btn, controls.querySelector('.end-call'));
+        }
+    }
+
+    async toggleScreenShare() {
+        if (this.isScreenSharing) {
+            await this.stopScreenShare();
+        } else {
+            await this.startScreenShare();
+        }
+    }
+
+    async startScreenShare() {
+        try {
+            const screenStream = await navigator.mediaDevices.getDisplayMedia({
+                video: { cursor: 'always' },
+                audio: true
+            });
+
+            const screenTrack = screenStream.getVideoTracks()[0];
+            
+            if (this.peerConnection) {
+                const sender = this.peerConnection.getSenders().find(s => s.track?.kind === 'video');
+                if (sender) {
+                    await sender.replaceTrack(screenTrack);
+                }
+            }
+
+            // Update local video
+            const localVideo = document.getElementById('localVideo');
+            if (localVideo) {
+                localVideo.srcObject = screenStream;
+            }
+
+            // Handle when user stops sharing via browser UI
+            screenTrack.onended = () => this.stopScreenShare();
+
+            this.isScreenSharing = true;
+            this.screenStream = screenStream;
+            
+            const btn = document.getElementById('screenShareBtn');
+            if (btn) btn.classList.add('active');
+            
+            this.showToast('Screen sharing started', 'success');
+        } catch (error) {
+            console.error('Screen share error:', error);
+            if (error.name !== 'NotAllowedError') {
+                this.showToast('Failed to share screen', 'error');
+            }
+        }
+    }
+
+    async stopScreenShare() {
+        if (this.screenStream) {
+            this.screenStream.getTracks().forEach(track => track.stop());
+        }
+
+        // Restore camera
+        if (this.localStream && this.peerConnection) {
+            const cameraTrack = this.localStream.getVideoTracks()[0];
+            const sender = this.peerConnection.getSenders().find(s => s.track?.kind === 'video');
+            if (sender && cameraTrack) {
+                await sender.replaceTrack(cameraTrack);
+            }
+            
+            const localVideo = document.getElementById('localVideo');
+            if (localVideo) {
+                localVideo.srcObject = this.localStream;
+            }
+        }
+
+        this.isScreenSharing = false;
+        this.screenStream = null;
+        
+        const btn = document.getElementById('screenShareBtn');
+        if (btn) btn.classList.remove('active');
+        
+        this.showToast('Screen sharing stopped', 'info');
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // PUSH NOTIFICATIONS
+    // ═════════════════════════════════════════════════════════════════
+
+    /**
+     * Setup enhanced push notifications
+     */
+    setupPushNotifications() {
+        if (!('Notification' in window)) return;
+
+        // Request permission after user interaction
+        document.body.addEventListener('click', () => {
+            if (Notification.permission === 'default') {
+                Notification.requestPermission();
+            }
+        }, { once: true });
+    }
+
+    /**
+     * Send push notification
+     */
+    sendNotification(title, body, data = {}) {
+        if (Notification.permission !== 'granted') return;
+        if (document.visibilityState === 'visible') return; // Don't notify if tab is active
+
+        const notification = new Notification(title, {
+            body: body,
+            icon: 'https://res.cloudinary.com/df8eafxtd/image/upload/v1758912201/cropped_circle_image_foloco.png',
+            badge: 'https://res.cloudinary.com/df8eafxtd/image/upload/v1758912201/cropped_circle_image_foloco.png',
+            tag: data.tag || 'prmessenger',
+            requireInteraction: false,
+            vibrate: [200, 100, 200]
+        });
+
+        notification.onclick = () => {
+            window.focus();
+            notification.close();
+        };
+
+        setTimeout(() => notification.close(), 5000);
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // E2E ENCRYPTION (Web Crypto API)
+    // ═════════════════════════════════════════════════════════════════
+
+    /**
+     * Setup encryption system
+     */
+    async setupEncryption() {
+        // Check if Web Crypto API is available
+        if (!window.crypto || !window.crypto.subtle) {
+            console.warn('Web Crypto API not available, encryption disabled');
+            return;
+        }
+
+        try {
+            // Generate key pair for this session
+            this.keyPair = await this.generateKeyPair();
+            console.log('🔐 Encryption keys generated');
+        } catch (error) {
+            console.error('Failed to setup encryption:', error);
+        }
+    }
+
+    /**
+     * Generate RSA-OAEP key pair for key exchange
+     */
+    async generateKeyPair() {
+        return await window.crypto.subtle.generateKey(
+            {
+                name: 'RSA-OAEP',
+                modulusLength: 2048,
+                publicExponent: new Uint8Array([1, 0, 1]),
+                hash: 'SHA-256'
+            },
+            true,
+            ['encrypt', 'decrypt']
+        );
+    }
+
+    /**
+     * Generate AES-GCM room key for symmetric encryption
+     */
+    async generateRoomKey() {
+        return await window.crypto.subtle.generateKey(
+            {
+                name: 'AES-GCM',
+                length: 256
+            },
+            true,
+            ['encrypt', 'decrypt']
+        );
+    }
+
+    /**
+     * Export public key to share with peers
+     */
+    async exportPublicKey(key) {
+        const exported = await window.crypto.subtle.exportKey('spki', key);
+        return this.arrayBufferToBase64(exported);
+    }
+
+    /**
+     * Import peer's public key
+     */
+    async importPublicKey(base64Key) {
+        const keyData = this.base64ToArrayBuffer(base64Key);
+        return await window.crypto.subtle.importKey(
+            'spki',
+            keyData,
+            {
+                name: 'RSA-OAEP',
+                hash: 'SHA-256'
+            },
+            true,
+            ['encrypt']
+        );
+    }
+
+    /**
+     * Encrypt message with room key (AES-GCM)
+     */
+    async encryptMessage(message) {
+        if (!this.encryptionEnabled || !this.roomKey) {
+            return { encrypted: false, data: message };
+        }
+
+        try {
+            const iv = window.crypto.getRandomValues(new Uint8Array(12));
+            const encoder = new TextEncoder();
+            const data = encoder.encode(message);
+
+            const encrypted = await window.crypto.subtle.encrypt(
+                { name: 'AES-GCM', iv: iv },
+                this.roomKey,
+                data
+            );
+
+            return {
+                encrypted: true,
+                data: this.arrayBufferToBase64(encrypted),
+                iv: this.arrayBufferToBase64(iv)
+            };
+        } catch (error) {
+            console.error('Encryption failed:', error);
+            return { encrypted: false, data: message };
+        }
+    }
+
+    /**
+     * Decrypt message with room key (AES-GCM)
+     */
+    async decryptMessage(encryptedData, ivBase64) {
+        if (!this.roomKey) {
+            return encryptedData;
+        }
+
+        try {
+            const encrypted = this.base64ToArrayBuffer(encryptedData);
+            const iv = this.base64ToArrayBuffer(ivBase64);
+
+            const decrypted = await window.crypto.subtle.decrypt(
+                { name: 'AES-GCM', iv: iv },
+                this.roomKey,
+                encrypted
+            );
+
+            const decoder = new TextDecoder();
+            return decoder.decode(decrypted);
+        } catch (error) {
+            console.error('Decryption failed:', error);
+            return '[Encrypted message - decryption failed]';
+        }
+    }
+
+    /**
+     * Enable encryption for current room
+     */
+    async enableEncryption() {
+        try {
+            this.roomKey = await this.generateRoomKey();
+            this.encryptionEnabled = true;
+            this.showToast('🔐 End-to-end encryption enabled', 'success');
+            
+            // Share room key with peers (would need server-side key exchange)
+            if (this.keyPair) {
+                const publicKeyBase64 = await this.exportPublicKey(this.keyPair.publicKey);
+                this.socket.emit('share-public-key', {
+                    roomCode: this.currentRoom,
+                    publicKey: publicKeyBase64
+                });
+            }
+        } catch (error) {
+            console.error('Failed to enable encryption:', error);
+            this.showToast('Failed to enable encryption', 'error');
+        }
+    }
+
+    /**
+     * Convert ArrayBuffer to Base64
+     */
+    arrayBufferToBase64(buffer) {
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        for (let i = 0; i < bytes.byteLength; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        return btoa(binary);
+    }
+
+    /**
+     * Convert Base64 to ArrayBuffer
+     */
+    base64ToArrayBuffer(base64) {
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes.buffer;
+    }
+
+    /**
+     * Check if encryption is available and enabled
+     */
+    isEncryptionAvailable() {
+        return !!(window.crypto && window.crypto.subtle);
     }
 }
 

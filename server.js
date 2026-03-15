@@ -117,6 +117,19 @@ const rooms = new Map();           // Store all active rooms
 const roomTimeouts = new Map();    // Store cleanup timeouts for empty rooms
 const userSessions = new Map();    // Store user session data (socketId -> session)
 const usernameToSocket = new Map(); // Track username -> socketId mapping per room
+const roomFiles = new Map();       // Track uploaded files per room (roomCode -> [filenames])
+
+// ═════════════════════════════════════════════════════════════════════
+// ROOM CLEANUP CONFIGURATION
+// ═════════════════════════════════════════════════════════════════════
+
+const CLEANUP_DELAY = 30 * 1000;   // 30 seconds before cleanup (was 30 minutes)
+const CLEANUP_CHECK_INTERVAL = 30 * 1000; // Check room state every 30 seconds
+
+// Start periodic cleanup checker
+setInterval(() => {
+    checkEmptyRoomsForCleanup();
+}, CLEANUP_CHECK_INTERVAL);
 
 // ═════════════════════════════════════════════════════════════════════
 // HELPER FUNCTIONS
@@ -209,6 +222,97 @@ function getParticipantCount(roomCode) {
 }
 
 /**
+ * Track a file upload for a room
+ * @param {string} roomCode - Room code
+ * @param {string} filename - Uploaded filename
+ */
+function trackRoomFile(roomCode, filename) {
+    if (!roomFiles.has(roomCode)) {
+        roomFiles.set(roomCode, []);
+    }
+    roomFiles.get(roomCode).push(filename);
+    console.log(`📁 Tracking file ${filename} for room ${roomCode}`);
+}
+
+/**
+ * Delete all files associated with a room
+ * @param {string} roomCode - Room code
+ */
+function deleteRoomFiles(roomCode) {
+    const files = roomFiles.get(roomCode) || [];
+    let deletedCount = 0;
+    
+    for (const filename of files) {
+        const filePath = path.join('./uploads', filename);
+        try {
+            if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+                deletedCount++;
+                console.log(`🗑️  Deleted file: ${filename}`);
+            }
+        } catch (error) {
+            console.error(`❌ Error deleting file ${filename}:`, error.message);
+        }
+    }
+    
+    roomFiles.delete(roomCode);
+    console.log(`🧹 Deleted ${deletedCount} files for room ${roomCode}`);
+    return deletedCount;
+}
+
+/**
+ * Full cleanup of a room (chat history + files)
+ * @param {string} roomCode - Room code to clean up
+ */
+function performFullRoomCleanup(roomCode) {
+    const room = rooms.get(roomCode);
+    const messageCount = room ? room.messages.length : 0;
+    
+    // Delete all uploaded files for this room
+    const filesDeleted = deleteRoomFiles(roomCode);
+    
+    // Clear chat history from memory
+    if (room) {
+        room.messages = [];
+    }
+    
+    // Delete room from memory
+    rooms.delete(roomCode);
+    
+    // Clear any pending timeouts
+    if (roomTimeouts.has(roomCode)) {
+        clearTimeout(roomTimeouts.get(roomCode));
+        roomTimeouts.delete(roomCode);
+    }
+    
+    console.log(`🧹 FULL CLEANUP: Room ${roomCode} - ${messageCount} messages cleared, ${filesDeleted} files deleted`);
+}
+
+/**
+ * Check all rooms and cleanup empty ones
+ */
+function checkEmptyRoomsForCleanup() {
+    const now = Date.now();
+    
+    for (const [roomCode, room] of rooms.entries()) {
+        if (room.users.size === 0) {
+            // Check if room has been empty long enough
+            if (room.emptyTimestamp && (now - room.emptyTimestamp) >= CLEANUP_DELAY) {
+                console.log(`⏰ Auto-cleanup triggered for empty room ${roomCode}`);
+                performFullRoomCleanup(roomCode);
+            } else if (!room.emptyTimestamp) {
+                // Mark room as empty with timestamp
+                room.emptyTimestamp = now;
+                console.log(`👀 Room ${roomCode} marked empty, cleanup scheduled in ${CLEANUP_DELAY/1000}s`);
+            }
+        } else {
+            // Room has users, clear empty timestamp
+            room.emptyTimestamp = null;
+        }
+    }
+}
+
+/**
  * Schedule automatic cleanup of empty rooms
  * @param {string} roomCode - Room code to clean up
  */
@@ -218,17 +322,21 @@ function scheduleRoomCleanup(roomCode) {
         clearTimeout(roomTimeouts.get(roomCode));
     }
     
-    // Schedule cleanup after 30 minutes of inactivity
+    const room = rooms.get(roomCode);
+    if (room) {
+        room.emptyTimestamp = Date.now();
+    }
+    
+    // Schedule cleanup after CLEANUP_DELAY
     const timeout = setTimeout(() => {
         const room = rooms.get(roomCode);
         if (room && room.users.size === 0) {
-            rooms.delete(roomCode);
-            roomTimeouts.delete(roomCode);
-            console.log(`🧹 Room ${roomCode} cleaned up (empty for 30 minutes)`);
+            performFullRoomCleanup(roomCode);
         }
-    }, 30 * 60 * 1000); // 30 minutes
+    }, CLEANUP_DELAY);
     
     roomTimeouts.set(roomCode, timeout);
+    console.log(`⏱️  Room ${roomCode} cleanup scheduled in ${CLEANUP_DELAY/1000}s`);
 }
 
 /**
@@ -345,6 +453,11 @@ app.post('/upload', upload.single('file'), (req, res) => {
 
         const { roomCode, userId, username } = req.body;
         
+        // Track file for room cleanup
+        if (roomCode) {
+            trackRoomFile(roomCode, req.file.filename);
+        }
+        
         // Broadcast file message to room if room data provided
         if (roomCode && userId && username) {
             const room = rooms.get(roomCode);
@@ -390,6 +503,11 @@ app.post('/upload-voice', upload.single('voice'), (req, res) => {
         };
 
         const { roomCode, userId, username } = req.body;
+        
+        // Track voice file for room cleanup
+        if (roomCode) {
+            trackRoomFile(roomCode, req.file.filename);
+        }
 
         // Broadcast voice message to room if room data provided
         if (roomCode && userId && username) {
@@ -927,16 +1045,152 @@ io.on('connection', (socket) => {
                 });
             }
             
-            // Delete room and cleanup timeout
-            rooms.delete(roomCode);
-            if (roomTimeouts.has(roomCode)) {
-                clearTimeout(roomTimeouts.get(roomCode));
-                roomTimeouts.delete(roomCode);
-            }
+            // Perform full cleanup (delete files + chat history)
+            performFullRoomCleanup(roomCode);
 
-            console.log(`🚪 Room ${roomCode} closed by admin`);
+            console.log(`🚪 Room ${roomCode} closed by admin with full cleanup`);
         } catch (error) {
             console.error('❌ Error closing room:', error);
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────────────
+    // VIDEO CALL SIGNALING
+    // ─────────────────────────────────────────────────────────────────
+    
+    /**
+     * Request a video call with another user
+     */
+    socket.on('video-call-request', (data) => {
+        try {
+            const { targetUserId, roomCode } = data;
+            const room = rooms.get(roomCode);
+            if (!room) return;
+            
+            const caller = room.users.get(socket.id);
+            if (!caller) return;
+            
+            console.log(`📹 Video call request: ${caller.username} -> ${targetUserId}`);
+            
+            // Send call request to target user
+            io.to(targetUserId).emit('video-call-incoming', {
+                callerId: socket.id,
+                callerName: caller.username,
+                roomCode: roomCode
+            });
+        } catch (error) {
+            console.error('❌ Error in video-call-request:', error);
+        }
+    });
+    
+    /**
+     * Accept a video call
+     */
+    socket.on('video-call-accept', (data) => {
+        try {
+            const { callerId, roomCode } = data;
+            const room = rooms.get(roomCode);
+            if (!room) return;
+            
+            const accepter = room.users.get(socket.id);
+            if (!accepter) return;
+            
+            console.log(`📹 Video call accepted by ${accepter.username}`);
+            
+            // Notify caller that call was accepted
+            io.to(callerId).emit('video-call-accepted', {
+                accepterId: socket.id,
+                accepterName: accepter.username
+            });
+        } catch (error) {
+            console.error('❌ Error in video-call-accept:', error);
+        }
+    });
+    
+    /**
+     * Reject a video call
+     */
+    socket.on('video-call-reject', (data) => {
+        try {
+            const { callerId, roomCode } = data;
+            const room = rooms.get(roomCode);
+            if (!room) return;
+            
+            const rejecter = room.users.get(socket.id);
+            console.log(`📹 Video call rejected by ${rejecter?.username || 'user'}`);
+            
+            // Notify caller that call was rejected
+            io.to(callerId).emit('video-call-rejected', {
+                rejecterId: socket.id
+            });
+        } catch (error) {
+            console.error('❌ Error in video-call-reject:', error);
+        }
+    });
+    
+    /**
+     * Send WebRTC offer
+     */
+    socket.on('video-offer', (data) => {
+        try {
+            const { targetUserId, offer } = data;
+            console.log(`📹 Video offer from ${socket.id} to ${targetUserId}`);
+            
+            io.to(targetUserId).emit('video-offer', {
+                callerId: socket.id,
+                offer: offer
+            });
+        } catch (error) {
+            console.error('❌ Error in video-offer:', error);
+        }
+    });
+    
+    /**
+     * Send WebRTC answer
+     */
+    socket.on('video-answer', (data) => {
+        try {
+            const { targetUserId, answer } = data;
+            console.log(`📹 Video answer from ${socket.id} to ${targetUserId}`);
+            
+            io.to(targetUserId).emit('video-answer', {
+                answererId: socket.id,
+                answer: answer
+            });
+        } catch (error) {
+            console.error('❌ Error in video-answer:', error);
+        }
+    });
+    
+    /**
+     * Exchange ICE candidates
+     */
+    socket.on('video-ice-candidate', (data) => {
+        try {
+            const { targetUserId, candidate } = data;
+            
+            io.to(targetUserId).emit('video-ice-candidate', {
+                senderId: socket.id,
+                candidate: candidate
+            });
+        } catch (error) {
+            console.error('❌ Error in video-ice-candidate:', error);
+        }
+    });
+    
+    /**
+     * End video call
+     */
+    socket.on('video-call-end', (data) => {
+        try {
+            const { targetUserId } = data;
+            console.log(`📹 Video call ended by ${socket.id}`);
+            
+            io.to(targetUserId).emit('video-call-ended', {
+                enderId: socket.id
+            });
+        } catch (error) {
+            console.error('❌ Error in video-call-end:', error);
         }
     });
 

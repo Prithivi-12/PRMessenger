@@ -1,11 +1,11 @@
-<!DOCTYPE html>
+ <!DOCTYPE html>
 <html lang="en">
 <head>
     <!-- ═══════════════════════════════════════════════════════════════
          META TAGS & CHARSET
          ═══════════════════════════════════════════════════════════════ -->
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PRMessenger - Perfect Real-time Chat</title>
     <meta name="description" content="Real-time chat application with voice messages, file sharing, and media support">
     <meta name="theme-color" content="#4A90E2">
@@ -132,57 +132,9 @@
 
     <!-- ═══════════════════════════════════════════════════════════════
          CHAT CONTAINER
-         Main chat interface with sidebar
+         Main chat interface
          ═══════════════════════════════════════════════════════════════ -->
     <div class="chat-container" id="chatContainer">
-        
-        <!-- ───────────────────────────────────────────────────────────
-             LEFT SIDEBAR - Participants List
-             ─────────────────────────────────────────────────────────── -->
-        <aside class="sidebar" id="sidebar">
-            
-            <!-- Sidebar Header with Current User Info -->
-            <div class="sidebar-header">
-                <!-- Current User Display -->
-                <div class="current-user-info">
-                    <div class="user-avatar" id="currentUserAvatar">U</div>
-                    <div class="user-details">
-                        <div class="user-name" id="currentUserName">User</div>
-                        <div class="user-status">Available for chat</div>
-                    </div>
-                </div>
-                
-                <!-- Sidebar Action Buttons -->
-                <div class="sidebar-actions">
-                    <button class="sidebar-icon-btn" id="sidebarSettingsBtn" title="Settings" aria-label="Settings">⚙</button>
-                    <button class="sidebar-icon-btn" id="sidebarMenuBtn" title="Menu" aria-label="Menu">⋮</button>
-                </div>
-            </div>
-
-            <!-- Search Participants -->
-            <div class="sidebar-search">
-                <label for="participantSearch" class="sr-only">Search participants</label>
-                <input type="text" 
-                       class="sidebar-search-input" 
-                       id="participantSearch" 
-                       placeholder="Search participants..."
-                       autocomplete="off">
-            </div>
-
-            <!-- Participants Section -->
-            <div class="sidebar-section">
-                <!-- Section Header -->
-                <div class="sidebar-section-header">
-                    <span class="sidebar-section-title">Participants</span>
-                    <span class="participant-count-badge" id="sidebarParticipantCount">0</span>
-                </div>
-                
-                <!-- Participants List Container -->
-                <div class="participants-list" id="participantsList">
-                    <!-- Participants will be dynamically added here by JavaScript -->
-                </div>
-            </div>
-        </aside>
 
         <!-- ───────────────────────────────────────────────────────────
              MAIN CHAT AREA
@@ -195,12 +147,6 @@
             <header class="chat-header">
                 <!-- Left Side - Room Info -->
                 <div class="header-left">
-                    <!-- Mobile Sidebar Toggle -->
-                    <button class="sidebar-toggle-btn" 
-                            id="sidebarToggleBtn" 
-                            aria-label="Toggle sidebar"
-                            aria-expanded="false">☰</button>
-                    
                     <!-- Room Information -->
                     <div class="room-info">
                         <h1 id="roomTitle" class="h3-style">PRMessenger</h1>
@@ -210,6 +156,27 @@
                 
                 <!-- Right Side - Controls -->
                 <div class="header-right">
+                    <!-- Participant Count -->
+                    <span class="participants" id="participantCount" aria-live="polite">0 participants</span>
+                    
+                    <!-- Search Button -->
+                    <button class="header-icon-btn" 
+                            id="searchBtn" 
+                            aria-label="Search messages"
+                            title="Search">🔍</button>
+                    
+                    <!-- Theme Button -->
+                    <button class="header-icon-btn" 
+                            id="themeBtn" 
+                            aria-label="Change theme"
+                            title="Theme">🎨</button>
+                    
+                    <!-- Gallery Button -->
+                    <button class="header-icon-btn" 
+                            id="galleryBtn" 
+                            aria-label="Image gallery"
+                            title="Gallery">🖼️</button>
+                    
                     <!-- Participant Count -->
                     <span class="participants" id="participantCount" aria-live="polite">0 participants</span>
                     
@@ -230,11 +197,11 @@
             <!-- ─────────────────────────────────────────────────────
                  MESSAGES CONTAINER
                  ───────────────────────────────────────────────────── -->
-            <main class="messages-container" 
-                  id="messagesContainer" 
-                  role="log" 
-                  aria-live="polite" 
-                  aria-atomic="false">
+            <section class="messages-container" 
+                     id="messagesContainer" 
+                     role="log" 
+                     aria-live="polite" 
+                     aria-atomic="false">
                 
                 <!-- Welcome Screen (shown when no messages) -->
                 <div class="welcome">
@@ -247,7 +214,7 @@
                     <p>Start chatting with voice messages, files, photos, and text.<br>
                        Your conversations are secure and real-time.</p>
                 </div>
-            </main>
+            </section>
 
             <!-- ─────────────────────────────────────────────────────
                  TYPING INDICATOR
@@ -391,6 +358,7 @@
          id="loadingModal" 
          role="dialog" 
          aria-modal="true" 
+         aria-hidden="true"
          aria-labelledby="loadingText">
         
         <div class="modal-content">
@@ -412,6 +380,7 @@
          id="roomMenuModal" 
          role="dialog" 
          aria-modal="true" 
+         aria-hidden="true"
          aria-labelledby="roomMenuTitle">
         
         <div class="modal-content">
@@ -428,6 +397,16 @@
                 <!-- Share Room Link -->
                 <button class="btn btn-outline btn-full" id="shareRoomBtn">
                     <span aria-hidden="true">📤</span> Share Room Link
+                </button>
+                
+                <!-- Enable Encryption -->
+                <button class="btn btn-outline btn-full" id="encryptionBtn">
+                    <span aria-hidden="true">🔐</span> Enable E2E Encryption
+                </button>
+                
+                <!-- View Analytics -->
+                <button class="btn btn-outline btn-full" id="analyticsBtn">
+                    <span aria-hidden="true">📊</span> Room Analytics
                 </button>
                 
                 <!-- Admin Controls (shown only for admin) -->
@@ -477,15 +456,256 @@
          ═══════════════════════════════════════════════════════════════ -->
     <input type="file" 
            id="fileInput" 
-           style="display: none;" 
+           hidden 
            accept="*/*" 
            aria-label="File upload">
 
     <!-- ═══════════════════════════════════════════════════════════════
-         SIDEBAR OVERLAY
-         Mobile backdrop when sidebar is open
+         VIDEO CALL CONTAINER
+         Fullscreen video call interface
          ═══════════════════════════════════════════════════════════════ -->
-    <div class="sidebar-overlay" id="sidebarOverlay" aria-hidden="true"></div>
+    <div class="video-call-container" 
+         id="videoCallContainer" 
+         role="dialog" 
+         aria-modal="true" 
+         aria-hidden="true"
+         aria-label="Video call">
+        
+        <!-- Remote Video (Full screen background) -->
+        <video class="video-remote" 
+               id="remoteVideo" 
+               autoplay 
+               playsinline></video>
+        
+        <!-- Local Video (Picture-in-picture) -->
+        <div class="video-local-wrapper" id="localVideoWrapper">
+            <video class="video-local" 
+                   id="localVideo" 
+                   autoplay 
+                   playsinline 
+                   muted></video>
+        </div>
+        
+        <!-- Call Status Overlay -->
+        <div class="video-call-status" id="videoCallStatus">
+            <div class="call-avatar" id="callAvatar">U</div>
+            <div class="call-name" id="callUserName">Calling...</div>
+            <div class="call-state" id="callState">Connecting...</div>
+        </div>
+        
+        <!-- Video Call Controls -->
+        <div class="video-call-controls">
+            <!-- Toggle Microphone -->
+            <button class="video-control-btn" 
+                    id="toggleMicBtn" 
+                    aria-label="Toggle microphone"
+                    title="Mute/Unmute">
+                <span class="control-icon" id="micIcon">🎤</span>
+            </button>
+            
+            <!-- End Call -->
+            <button class="video-control-btn end-call" 
+                    id="endCallBtn" 
+                    aria-label="End call"
+                    title="End Call">
+                <span class="control-icon">📞</span>
+            </button>
+            
+            <!-- Toggle Camera -->
+            <button class="video-control-btn" 
+                    id="toggleCameraBtn" 
+                    aria-label="Toggle camera"
+                    title="Camera On/Off">
+                <span class="control-icon" id="cameraIcon">📹</span>
+            </button>
+            
+            <!-- Switch Camera (Mobile) -->
+            <button class="video-control-btn" 
+                    id="switchCameraBtn" 
+                    aria-label="Switch camera"
+                    title="Switch Camera">
+                <span class="control-icon">🔄</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         INCOMING CALL MODAL
+         Notification for incoming video calls
+         ═══════════════════════════════════════════════════════════════ -->
+    <div class="incoming-call-modal" 
+         id="incomingCallModal" 
+         role="alertdialog" 
+         aria-modal="true" 
+         aria-hidden="true"
+         aria-labelledby="incomingCallerName">
+        
+        <div class="incoming-call-content">
+            <!-- Caller Info -->
+            <div class="incoming-call-avatar" id="incomingCallAvatar">U</div>
+            <div class="incoming-call-name" id="incomingCallerName">User</div>
+            <div class="incoming-call-text">Incoming Video Call...</div>
+            
+            <!-- Call Actions -->
+            <div class="incoming-call-actions">
+                <!-- Reject Call -->
+                <button class="call-action-btn reject" 
+                        id="rejectCallBtn" 
+                        aria-label="Reject call">
+                    <span>✕</span>
+                    <span class="call-action-label">Decline</span>
+                </button>
+                
+                <!-- Accept Call -->
+                <button class="call-action-btn accept" 
+                        id="acceptCallBtn" 
+                        aria-label="Accept call">
+                    <span>📹</span>
+                    <span class="call-action-label">Accept</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         CUSTOM MODAL (Replace prompt/confirm)
+         Reusable modal for all dialogs
+         ═══════════════════════════════════════════════════════════════ -->
+    <div class="custom-modal" id="customModal" role="dialog" aria-modal="true" aria-hidden="true">
+        <div class="custom-modal-backdrop" id="customModalBackdrop"></div>
+        <div class="custom-modal-content">
+            <div class="custom-modal-header">
+                <h3 class="custom-modal-title" id="customModalTitle">Title</h3>
+                <button class="custom-modal-close" id="customModalClose" aria-label="Close">✕</button>
+            </div>
+            <div class="custom-modal-body" id="customModalBody">
+                <p id="customModalMessage">Message</p>
+                <input type="text" class="custom-modal-input" id="customModalInput" placeholder="Enter text...">
+            </div>
+            <div class="custom-modal-footer" id="customModalFooter">
+                <button class="btn btn-outline" id="customModalCancel">Cancel</button>
+                <button class="btn btn-primary" id="customModalConfirm">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         MESSAGE SEARCH PANEL
+         Search through chat messages
+         ═══════════════════════════════════════════════════════════════ -->
+    <div class="search-panel" id="searchPanel" aria-hidden="true">
+        <div class="search-panel-header">
+            <input type="text" 
+                   class="search-panel-input" 
+                   id="searchInput" 
+                   placeholder="Search messages..."
+                   autocomplete="off">
+            <button class="search-panel-close" id="closeSearchPanel" aria-label="Close search">✕</button>
+        </div>
+        <div class="search-results" id="searchResults">
+            <div class="search-placeholder">Enter text to search messages</div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         IMAGE GALLERY (Carousel)
+         View all images in room
+         ═══════════════════════════════════════════════════════════════ -->
+    <div class="image-gallery" id="imageGallery" role="dialog" aria-modal="true" aria-hidden="true">
+        <div class="gallery-header">
+            <span class="gallery-counter" id="galleryCounter">1 / 10</span>
+            <button class="gallery-close" id="closeGallery" aria-label="Close gallery">✕</button>
+        </div>
+        <button class="gallery-nav gallery-prev" id="galleryPrev" aria-label="Previous image">❮</button>
+        <div class="gallery-content">
+            <img class="gallery-image" id="galleryImage" alt="Gallery image">
+        </div>
+        <button class="gallery-nav gallery-next" id="galleryNext" aria-label="Next image">❯</button>
+        <div class="gallery-thumbnails" id="galleryThumbnails"></div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         THEME SELECTOR
+         Choose dark/light/custom themes
+         ═══════════════════════════════════════════════════════════════ -->
+    <div class="theme-panel" id="themePanel" aria-hidden="true">
+        <div class="theme-panel-header">
+            <h3>Choose Theme</h3>
+            <button class="theme-panel-close" id="closeThemePanel" aria-label="Close">✕</button>
+        </div>
+        <div class="theme-options">
+            <button class="theme-option" data-theme="dark">
+                <span class="theme-preview dark-preview"></span>
+                <span>Dark</span>
+            </button>
+            <button class="theme-option" data-theme="light">
+                <span class="theme-preview light-preview"></span>
+                <span>Light</span>
+            </button>
+            <button class="theme-option" data-theme="midnight">
+                <span class="theme-preview midnight-preview"></span>
+                <span>Midnight</span>
+            </button>
+            <button class="theme-option" data-theme="forest">
+                <span class="theme-preview forest-preview"></span>
+                <span>Forest</span>
+            </button>
+            <button class="theme-option" data-theme="sunset">
+                <span class="theme-preview sunset-preview"></span>
+                <span>Sunset</span>
+            </button>
+        </div>
+        <div class="custom-theme-section">
+            <h4>Custom Colors</h4>
+            <div class="color-picker-row">
+                <label>Primary</label>
+                <input type="color" id="customPrimaryColor" value="#4A90E2">
+            </div>
+            <div class="color-picker-row">
+                <label>Background</label>
+                <input type="color" id="customBgColor" value="#0a0a0a">
+            </div>
+            <button class="btn btn-primary btn-sm" id="applyCustomTheme">Apply Custom</button>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         ROOM ANALYTICS (Admin Dashboard)
+         ═══════════════════════════════════════════════════════════════ -->
+    <div class="analytics-panel" id="analyticsPanel" role="dialog" aria-hidden="true">
+        <div class="analytics-header">
+            <h3>📊 Room Analytics</h3>
+            <button class="analytics-close" id="closeAnalytics" aria-label="Close">✕</button>
+        </div>
+        <div class="analytics-content">
+            <div class="analytics-grid">
+                <div class="analytics-card">
+                    <div class="analytics-value" id="statTotalMessages">0</div>
+                    <div class="analytics-label">Total Messages</div>
+                </div>
+                <div class="analytics-card">
+                    <div class="analytics-value" id="statParticipants">0</div>
+                    <div class="analytics-label">Participants</div>
+                </div>
+                <div class="analytics-card">
+                    <div class="analytics-value" id="statMediaFiles">0</div>
+                    <div class="analytics-label">Media Files</div>
+                </div>
+                <div class="analytics-card">
+                    <div class="analytics-value" id="statVoiceMessages">0</div>
+                    <div class="analytics-label">Voice Messages</div>
+                </div>
+            </div>
+            <div class="analytics-section">
+                <h4>Active Users</h4>
+                <div class="analytics-user-list" id="analyticsUserList"></div>
+            </div>
+            <div class="analytics-section">
+                <h4>Message Activity</h4>
+                <div class="analytics-chart" id="activityChart"></div>
+            </div>
+        </div>
+    </div>
 
     <!-- ═══════════════════════════════════════════════════════════════
          JAVASCRIPT DEPENDENCIES

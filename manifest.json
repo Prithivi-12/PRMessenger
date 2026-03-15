@@ -1,13 +1,14 @@
 {
     "name": "PRMessenger - Perfect Real-time Chat",
     "short_name": "PRMessenger",
-    "description": "Perfect real-time chat with advanced features",
+    "description": "Perfect real-time chat with voice, files, photos",
     "start_url": "/",
     "display": "standalone",
     "background_color": "#0f0f0f",
-    "theme_color": "#1976d2",
+    "theme_color": "#4A90E2",
     "orientation": "portrait-primary",
     "scope": "/",
+    "categories": ["social", "productivity", "messaging"],
     "icons": [
         {
             "src": "https://res.cloudinary.com/df8eafxtd/image/upload/v1758912201/cropped_circle_image_foloco.png",
@@ -16,10 +17,18 @@
             "purpose": "any maskable"
         },
         {
-            "src": "https://res.cloudinary.com/df8eafxtd/image/upload/v1758912201/cropped_circle_image_foloco.png",
+            "src": "https://res.cloudinary.com/df8eafxtd/image/upload/c_scale,w_512,h_512/v1758912201/cropped_circle_image_foloco.png",
             "sizes": "512x512",
             "type": "image/png",
             "purpose": "any maskable"
+        }
+    ],
+    "shortcuts": [
+        {
+            "name": "New Chat",
+            "short_name": "Chat",
+            "description": "Start a new chat room",
+            "url": "/?new=1"
         }
     ]
 }
