@@ -31,8 +31,8 @@ const server = http.createServer(app);
 const io = socketIo(server, {
     cors: {
         origin: [
-            "https://prmessenger.app",
-            "https://www.prmessenger.app",
+            // "https://prmessenger.app",
+            // "https://www.prmessenger.app",
             "http://localhost:3000"
         ],
         methods: ["GET", "POST"],
@@ -51,8 +51,8 @@ const io = socketIo(server, {
 // Enable CORS for all routes
 app.use(cors({
     origin: [
-        "https://prmessenger.app",
-        "https://www.prmessenger.app",
+        // "https://prmessenger.app",
+        // "https://www.prmessenger.app",
         "http://localhost:3000"
     ],
     credentials: true
@@ -167,7 +167,7 @@ function removeOldUserConnections(roomCode, username, currentSocketId) {
  * @returns {string} - Room code (e.g., "ABC123")
  */
 function generateRoomCode() {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    const chars = '0123456789';
     let result = '';
     for (let i = 0; i < 6; i++) {
         result += chars.charAt(Math.floor(Math.random() * chars.length));
@@ -1254,7 +1254,7 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log('✅ PRMessenger Server Started');
     console.log('═══════════════════════════════════════════════════════');
     console.log(`🌐 Port: ${PORT}`);
-    console.log(`🏠 Domain: https://prmessenger.app`);
+    // console.log(`🏠 Domain: https://prmessenger.app`);
     console.log(`📁 Active rooms: ${rooms.size}`);
     console.log(`👥 Active users: ${userSessions.size}`);
     console.log('═══════════════════════════════════════════════════════\n');
