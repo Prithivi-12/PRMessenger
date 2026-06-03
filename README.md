@@ -152,8 +152,8 @@ const fileSize = 25 * 1024 * 1024;    // 25MB max upload
 ### CORS Origins
 ```javascript
 origin: [
-    "https://prmessenger.app",
-    "https://www.prmessenger.app",
+    // "https://prmessenger.app",
+    // "https://www.prmessenger.app",
     "http://localhost:3000"
 ]
 ```
