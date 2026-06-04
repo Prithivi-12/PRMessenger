@@ -65,7 +65,7 @@
 
 ```bash
 # Clone or navigate to project
-cd /var/www/prmessenger
+cd prmessenger
 
 # Install dependencies
 npm install
@@ -80,6 +80,8 @@ npm start
 # With auto-reload (requires nodemon)
 npm run dev
 ```
+# Install dependenciesnodemon globally if you haven't already
+npm install -g nodemon
 
 The server will start on `http://localhost:3000`
 
