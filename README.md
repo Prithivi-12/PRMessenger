@@ -258,4 +258,4 @@ MIT License - feel free to use for personal or commercial projects.
 
 ---
 
-**PRMessenger** - Built with ❤️ for seamless real-time communication.
+**PRMessenger** - Built with Ai for seamless real-time communication.
